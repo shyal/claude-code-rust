@@ -278,6 +278,8 @@ pub enum MessageBlock {
     Text(TextBlock),
     ToolCall(Box<ToolCallInfo>),
     Welcome(WelcomeBlock),
+    /// Indicates N images were attached to this user message.
+    ImageAttachment(usize),
 }
 
 #[derive(Debug)]

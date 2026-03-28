@@ -121,9 +121,19 @@ fn dispatch_prompt_turn(app: &mut App, text: String) {
         return;
     };
 
+    // Take pending images for this turn.
+    let images = std::mem::take(&mut app.pending_images);
+    let image_count = images.len();
+
+    let mut user_blocks: Vec<MessageBlock> = Vec::new();
+    if image_count > 0 {
+        user_blocks.push(MessageBlock::ImageAttachment(image_count));
+    }
+    user_blocks.push(MessageBlock::Text(TextBlock::from_complete(&text)));
+
     app.push_message_tracked(ChatMessage {
         role: MessageRole::User,
-        blocks: vec![MessageBlock::Text(TextBlock::from_complete(&text))],
+        blocks: user_blocks,
         usage: None,
     });
     // Create empty assistant message immediately -- message.rs shows thinking indicator
@@ -138,7 +148,9 @@ fn dispatch_prompt_turn(app: &mut App, text: String) {
     app.viewport.engage_auto_scroll();
 
     let tx = app.event_tx.clone();
-    match conn.prompt_text(sid.to_string(), text) {
+    // The text already contains [Image #N] badges from the textarea,
+    // so the model can correlate user references with image attachments.
+    match conn.prompt_with_images(sid.to_string(), text, images) {
         Ok(resp) => {
             tracing::debug!("Prompt dispatched: stop_reason={:?}", resp.stop_reason);
         }

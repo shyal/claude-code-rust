@@ -36,11 +36,12 @@ impl super::App {
     }
 
     #[must_use]
-    fn block_cache(block: &MessageBlock) -> &super::BlockCache {
+    fn block_cache(block: &MessageBlock) -> Option<&super::BlockCache> {
         match block {
-            MessageBlock::Text(block) => &block.cache,
-            MessageBlock::Welcome(welcome) => &welcome.cache,
-            MessageBlock::ToolCall(tc) => &tc.cache,
+            MessageBlock::Text(block) => Some(&block.cache),
+            MessageBlock::Welcome(welcome) => Some(&welcome.cache),
+            MessageBlock::ToolCall(tc) => Some(&tc.cache),
+            MessageBlock::ImageAttachment(_) => None,
         }
     }
 
@@ -97,8 +98,12 @@ impl super::App {
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             let mut slots = Vec::with_capacity(msg.blocks.len());
             for (block_idx, block) in msg.blocks.iter().enumerate() {
-                let cache = Self::block_cache(block);
-                let cached_bytes = cache.cached_bytes();
+                let (cached_bytes, last_access_tick) =
+                    if let Some(cache) = Self::block_cache(block) {
+                        (cache.cached_bytes(), cache.last_access_tick())
+                    } else {
+                        (0, 0)
+                    };
                 let protected = protected_tail == Some(msg_idx)
                     || matches!(
                         block,
@@ -110,7 +115,7 @@ impl super::App {
                     );
                 let slot = RenderCacheSlotState {
                     cached_bytes,
-                    last_access_tick: cache.last_access_tick(),
+                    last_access_tick,
                     protected,
                 };
                 self.render_cache_total_bytes =
@@ -158,10 +163,14 @@ impl super::App {
             self.rebuild_render_cache_accounting();
             return;
         };
-        let cache = Self::block_cache(block);
+        let (cached_bytes, last_access_tick) = if let Some(cache) = Self::block_cache(block) {
+            (cache.cached_bytes(), cache.last_access_tick())
+        } else {
+            (0, 0)
+        };
         let new_slot = RenderCacheSlotState {
-            cached_bytes: cache.cached_bytes(),
-            last_access_tick: cache.last_access_tick(),
+            cached_bytes,
+            last_access_tick,
             protected: self.is_render_cache_block_protected(msg_idx, block_idx),
         };
         if let Some(slots) = self.render_cache_slots.get_mut(msg_idx) {
@@ -228,11 +237,16 @@ impl super::App {
 
         for (msg_idx, msg) in self.messages.iter().enumerate() {
             for (block_idx, block) in msg.blocks.iter().enumerate() {
-                let cache = Self::block_cache(block);
+                let (cached_bytes, last_access_tick) =
+                    if let Some(cache) = Self::block_cache(block) {
+                        (cache.cached_bytes(), cache.last_access_tick())
+                    } else {
+                        (0, 0)
+                    };
                 let protected = self.is_render_cache_block_protected(msg_idx, block_idx);
                 let slot = RenderCacheSlotState {
-                    cached_bytes: cache.cached_bytes(),
-                    last_access_tick: cache.last_access_tick(),
+                    cached_bytes,
+                    last_access_tick,
                     protected,
                 };
                 if let Some(slots) = self.render_cache_slots.get_mut(msg_idx)
@@ -302,6 +316,7 @@ impl super::App {
             MessageBlock::Text(block) => block.cache.evict_cached_render(),
             MessageBlock::Welcome(welcome) => welcome.cache.evict_cached_render(),
             MessageBlock::ToolCall(tc) => tc.cache.evict_cached_render(),
+            MessageBlock::ImageAttachment(_) => 0,
         };
         if removed > 0 {
             self.sync_render_cache_slot(msg_idx, block_idx);
